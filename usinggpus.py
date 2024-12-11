@@ -17,9 +17,9 @@ import mpi4py as mpi
 from mpi4py import MPI
 
 #import global hyperparameter values like batch_size and epochs
-import globals
 
 def main():
+    torch.multiprocessing.set_sharing_strategy('file_system')
 
 ### PARSE ARG OPTIONS ###
     parser = argparse.ArgumentParser()
@@ -28,8 +28,12 @@ def main():
     parser.add_argument("-v", "--verbose", action="store_true", help="specify text output")
     args = parser.parse_args()
 
+    #num_workers = 1
+    #batch_size  = args.batch_size
+    #epochs      = args.epochs
+
     num_workers = 1
-    batch_size  = args.batch_size
+    batch_size  = 8
     epochs      = args.epochs
 
 
@@ -45,8 +49,6 @@ def main():
         print(f"world size is: {world_size}")
     
     print(f"my rank is: {my_rank}")
-
-
 
 ##### PART 1: INITIAL SETUP OF DATA AND MODEL #####
 
@@ -64,9 +66,6 @@ def main():
         training_data = tv.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
         training_loader = tu.data.DataLoader(training_data, batch_size=mini_batch_size, shuffle=True, num_workers=num_workers)
 
-        #determine batches that will be passed through
-        num_mini_batches = len(training_loader)
-
     ### MODEL AND PIPELINING SETUP FOR PIPELINING NODES ###
     else:
         #choose your model (resnet50)
@@ -81,34 +80,44 @@ def main():
         subsection_size = (len(layers) + (world_size - 1))// world_size
 
         #assign subsection of layers based on rank
-        my_subsection = layers[(my_rank - 1)*subsection_size : min(len(layers), (my_rank)*subsection_size)]
+        subsection_layers = layers[(my_rank - 1) * subsection_size : min(len(layers), my_rank * subsection_size)]
+        my_subsection = nn.Sequential(*subsection_layers)
 
         criterion = nn.CrossEntropyLoss()
         optimizer = optim.Adam(params = model.parameters(), lr = 0.001)
 
-
 ##### PART 2: TRAINING #####
     if my_rank == 0:
+        print(f"training {my_rank}!")
+
         #broadcast how many rounds of batches each node will have to process
-        comm.broadcast(num_mini_batches, root=0)
+        num_mini_batches = len(training_loader)
+        print(f"batches: {num_mini_batches}")
+        
+        comm.bcast(num_mini_batches, root=0)
+        
 
         #send batches to rank 1
-        for batch in range(0, num_mini_batches + world_size):
-            
-            if batch < num_mini_batches:
-                comm.send(training_loader[batch], dest = (my_rank + 1), tag = (my_rank + 1))
+        for i, batch in enumerate(iterable = training_loader, start = 0):
+            print(f"...")
+            inputs, labels = batch
+            comm.send(inputs, dest=(my_rank + 1), tag=(my_rank + 1))
 
-            if batch > world_size:
-                #TODO: What to do with output?
-                comm.recv(output, dest = (my_rank + 1), tag = (my_rank + 1))
-
+            if i >= world_size:
+                #TODO: Figure out what to do with the loss
+                loss = comm.recv(source=(world_size - 1), tag=my_rank)
+                # Save the received loss periodically
+                #torch.save(loss, f'loss_checkpoint_batch_{batch}.pt')
 
         #wait to recieve that number of batches back
 
+    elif my_rank > 0 and my_rank < (world_size - 1):
+        print(f"training {my_rank}!")
 
-    elif my_rank > 0 and my_rank < (mpi_world - 1):
         #recieve number of batches that will be passing through nodes
-        num_mini_batches = comm.broadcast(num_mini_batches, root=0)
+        num_mini_batches = None
+        num_mini_batches = comm.bcast(num_mini_batches, root=0)
+        
 
         #pass each mini-batch through assigned layers
         for _ in range(num_mini_batches):
@@ -116,39 +125,22 @@ def main():
             result = my_subsection(data)
             comm.send(result, dest = (my_rank + 1), tag = (my_rank + 1))
     else:
+        num_mini_batches = None
+        num_mini_batches = comm.bcast(num_mini_batches, root=0)
 
         for _ in range(num_mini_batches):
             data = comm.recv(source=(my_rank - 1), tag= my_rank)
             result = my_subsection(data)
-            comm.sendbuf(result, dest = (my_rank + 1), tag = (my_rank + 1))
 
-            
-
-#TODO: confirm that this properly sets up destination so that last GPU sends to world
-            
-#TODO: Should the last GPU send data to a buffer? 
-
-
+            #compute loss in final layer
+            outputs, labels = result
+            loss = criterion(outputs, labels)
+            comm.send(loss, dest = 0, tag = 0)
 
 ##### PART 3: BACKPROPOGATION #####
-    if my_rank == 0:
         #feed batches back into 
 
-
-    ''' start_time = time.time
-    for epoch in range(epochs):
-        running_loss = 0.0
-
-        # iterate over data for each epoch
-        for i, data in enumerate(iterable = training_loader, start = 0):
-            
-            inputs, labels = data
-            inputs, labels = inputs.to(device), labels.to(device)
-            
-            outputs = model(inputs)
-            loss = criterion(outputs, labels)
-            
-
+    ''' 
             # update weights
             optimizer.zero_grad()
             loss.backward()
@@ -160,7 +152,7 @@ def main():
 
     end_time = time.time
 
-    print(f'Used {epochs} epochs with a batch size of {batch_size}. It took {end_time - start_time} seconds.')'''
+'''
     
 
 if __name__ == "__main__": 
