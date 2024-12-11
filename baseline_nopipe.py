@@ -15,9 +15,6 @@ import torchvision.models as models
 
 import mpi4py as mpi
 
-#import global hyperparameter values like batch_size and epochs
-import globals
-
 def main():
 
     # batch size
@@ -41,21 +38,20 @@ def main():
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(params = model.parameters(), lr = 0.001)
     
-    mpi.init()
-    comm = mpi.comm_world()
+    # comm = mpi.comm_world()
 
-    #get 'dimensions' of world
-    size = comm.Get_size()
-    rank = comm.Get_rank()
+    # #get 'dimensions' of world
+    # size = comm.Get_size()
+    # rank = comm.Get_rank()
 
     #calculate number of layers per GPU
-    subsection_size = (len(layers) + (size - 1))// size
-    if(rank > 0):
-       subsection = layers[(rank - 1)*subsection_size : min(len(layers), (rank)*subsection_size)]
+    # subsection_size = (len(layers) + (size - 1))// size
+    # if(rank > 0):
+    #    subsection = layers[(rank - 1)*subsection_size : min(len(layers), (rank)*subsection_size)]
 
-    #device = ("cuda" if torch.cuda.is_available else "cpu")
-    #print("The device you are using is: ", device)
-    #model.to(device = device)
+    device = ("cuda" if torch.cuda.is_available else "cpu")
+    print("The device you are using is: ", device)
+    model.to(device = device)
 
     start_time = time.time
     for epoch in range(epochs):
@@ -68,15 +64,16 @@ def main():
             inputs, labels = inputs.to(device), labels.to(device)
             
             outputs = model(inputs)
+
+
+            if i % 200 == 0:
+                print(f"labels: {labels}")
+                print(f"outputs:{outputs}")
+
             loss = criterion(outputs, labels)
 
             #access layers of the model
             layers = list(model.children())
-
-            # for a node number
-            node_num = 1
-            if node_num == 1:
-                print('yay')
 
             #for child in model.children():
             #    grandchildren = 0
@@ -92,7 +89,7 @@ def main():
             optimizer.step()
             running_loss += loss.item()
 
-            if i % 20  == 19:
+            if i % 50  == 19:
                 print(f'[{epoch + 1}, {i + 1:5d}] loss : {running_loss / 20:.3f}')
 
     end_time = time.time
