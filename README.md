@@ -14,3 +14,11 @@ Then request a GPU for resources to run the model.
 ```
 srun -A sxk1942_csds451 -p markov_gpu --gres=gpu:1 --mem=4gb --pty bash
 ```
+
+### Running The GPipeline Code
+This actually requires the newest version of pytorch (so can't be run with the same module list as the MPI code).
+
+Run the basic application on a transformer model provided by pytorch by running:
+```
+torchrun --nnodes 1 --nproc_per_node 2 pytorch_pipeline_tutorial.py
+```

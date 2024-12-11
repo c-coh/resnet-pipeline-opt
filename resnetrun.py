@@ -17,10 +17,15 @@ import mpi4py as mpi
 
 def main():
 
-    # batch size
-    batch_size = 4
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-b", "--batch_size", default=4, type=int, help="specify batch size")
+    parser.add_argument("-e", "--epochs", default=2, type=int, help="specify number of training epochs")
+    parser.add_argument("-v", "--verbose", action="store_true", help="specify text output")
+    args = parser.parse_args()
+
     num_workers = 1
-    epochs = 2
+    batch_size  = args.batch_size
+    epochs      = args.epochs
 
     ### MODEL SETUP ###
 
