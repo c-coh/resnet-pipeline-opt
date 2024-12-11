@@ -1,122 +1,120 @@
 #!/usr/bin/env python3
 
 import time
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.utils as tu
-
-import pytorch_lighting as pl 
-
 import torchvision as tv
 import torchvision.models as models
 
-#import global hyperparameter values like batch_size and epochs
-import globals
+import pytorch_lightning as pl
+from pytorch_lightning.strategies import DDPStrategy
+from torch.utils.data import DataLoader
 
+class CIFAR10Data(pl.LightningDataModule):
+    def __init__(self, batch_size=128):
+        super().__init__()
+        self.batch_size = batch_size
 
-class ResNet50(LightingModule):
-    def __init__(self, num_classes):
-        super
+    def prepare_data(self):
+        # Download data if needed
+        tv.datasets.CIFAR10(root="data", train=True, download=True)
 
     def setup(self, stage=None):
-        pass
+        # Transformations
+        transform = tv.transforms.Compose([
+            tv.transforms.ToTensor(),
+            tv.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+        ])
+        
+        if stage == 'fit' or stage is None:
+            self.cifar10_train = tv.datasets.CIFAR10(root="data", train=True, transform=transform)
+
     def train_dataloader(self):
-        return tu.data.DataLoader(self.train_dataset, batch_size = self.batch_size, shuffle=True)
-    
-    def val_dataloader(self):
-        return tu.data.DataLoader(self.val_dataset, batch_size=self.batch_size)
+        return DataLoader(self.cifar10_train, batch_size=self.batch_size, shuffle=True, num_workers=4)
 
-class ResNet50(p1.LightningModule):
-    def __init__(self, num_classes=10, lr=0.001):
+class ResNet50Pipeline(pl.LightningModule):
+    def __init__(self, num_classes=10, lr=0.01):
         super().__init__()
-        self.save_hyperparameters()
-        self.model = torchvision.models.resnet50()
+        self.lr = lr
 
-def main():
+        #get resnet model
+        resnet50 = models.resnet50(pretrained=False)
+        resnet50.fc = nn.Linear(resnet50.fc.in_features, num_classes)
 
-    # batch size
-    batch_size = 4
+        #get number of available gpus
+        num_gpus = torch.cuda.device_count()
+
+        #divide model into sublayers based on the number of GPUs
+        layers = list(resnet50.children())
+        subsection_size = len(layers) // num_gpus
+        subsection = [nn.Sequential(*layers[i * subsection_size:(i + 1) * subsection_size]) for i in range(num_gpus)]
+
+        #wrap stages into Pipe
+        self.pipeline = torch.distributed.pipeline.sync.Pipe(
+            nn.Sequential(*subsection),
+            chunks=2,
+            devices=[f"cuda:{i}" for i in range(num_gpus)],
+            checkpoint="never"
+        )
+
+    def forward(self, x):
+        return self.pipeline(x)
+
+    def training_step(self, batch, batch_idx):
+
+        #time forwards pass
+        start_time = time.time()
+        x, y = batch
+        outputs = self.forward(x)
+        forward_time = time.time() - start_time
+
+        loss = nn.CrossEntropyLoss()(outputs, y)
+
+        #time backwards pass
+        start_time = time.time()
+        self.manual_backward(loss)
+        backward_time = time.time() - start_time
+
+        self.log("train_loss", loss)
+        self.log("forward_time", forward_time, prog_bar=True)
+        self.log("backward_time", backward_time, prog_bar=True)
+
+        return loss
+
+    def configure_optimizers(self):
+        optimizer = optim.Adam(self.parameters(), lr=self.lr)
+        return optimizer
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-b", "--batch_size", default=4, type=int, help="specify batch size")
+    parser.add_argument("-e", "--epochs", default=2, type=int, help="specify number of training epochs")
+    parser.add_argument("-g", "--gpus", default=3, type=int, help="specify number of gpus")
+    parser.add_argument("-v", "--verbose", action="store_true", help="specify text output")
+
+    args = parser.parse_args()
+
     num_workers = 1
-    epochs = 2
-
-    ### MODEL SETUP ###
-
-    transform = tv.transforms.Compose([tv.transforms.ToTensor()])
-
-    training_data = tv.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
-    training_loader = tu.data.DataLoader(training_data, batch_size=batch_size, shuffle=True, num_workers=num_workers)
-
-    #choose your model
-    model = models.resnet50()
-
-    # modify last layer to match 10 classes in CIFAR-10
-    model.fc = nn.Linear(model.fc.in_features, 10)
-
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(params = model.parameters(), lr = 0.001)
-    
-    mpi.init()
-    comm = mpi.comm_world()
-
-    #get 'dimensions' of world
-    size = comm.Get_size()
-    rank = comm.Get_rank()
-
-    #calculate number of layers per GPU
-    subsection_size = (len(layers) + (size - 1))// size
-    if(rank > 0):
-       subsection = layers[(rank - 1)*subsection_size : min(len(layers), (rank)*subsection_size)]
-
-    #device = ("cuda" if torch.cuda.is_available else "cpu")
-    #print("The device you are using is: ", device)
-    #model.to(device = device)
-
-    start_time = time.time
-    for epoch in range(epochs):
-        running_loss = 0.0
-
-        # iterate over data for each epoch
-        for i, data in enumerate(iterable = training_loader, start = 0):
-            
-            inputs, labels = data
-            inputs, labels = inputs.to(device), labels.to(device)
-            
-            outputs = model(inputs)
-            loss = criterion(outputs, labels)
-
-            #access layers of the model
-            layers = list(model.children())
-
-            # for a node number
-            node_num = 1
-            if node_num == 1:
-                print('yay')
-
-            #for child in model.children():
-            #    grandchildren = 0
-            #    for grandkid in child.children():
-            #        grandchildren += 1
-            #    print(grandchildren)
-
-            
-
-            # update weights
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            running_loss += loss.item()
-
-            if i % 20  == 19:
-                print(f'[{epoch + 1}, {i + 1:5d}] loss : {running_loss / 20:.3f}')
-
-    end_time = time.time
-
-    print(f'Used {epochs} epochs with a batch size of {batch_size}. It took {end_time - start_time} seconds.')
-    
-    
+    batch_size  = args.batch_size
+    epochs      = args.epochs
+    gpus        = args.gpus
 
 
-if __name__ == "__main__": 
-    main()
+    init_process_group("nccl")
+
+    #initalize data
+    data = CIFAR10Data(batch_size=128)
+
+    #initialize model
+    model = ResNet50Pipeline()
+
+    #train the model
+    trainer = pl.Trainer(
+        strategy=DDPStrategy(find_unused_parameters=False),
+        accelerator="gpu",
+        devices=gpus,
+        max_epochs=10
+    )
+    trainer.fit(model, datamodule=data)
