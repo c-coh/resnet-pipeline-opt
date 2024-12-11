@@ -10,7 +10,7 @@ module load mpi4py
 module load PyTorch-bundle/2.1.2-foss-2023a-CUDA-12.1.1
 ```
 
-Then request a GPU for resources to run the model. Make sure to set number of nodes.
+Then request a GPU for resources to run the model. Make sure to set number of nodes with -N.
 ```
 srun -A sxk1942_csds451 -p markov_gpu -N 4 --gres=gpu:1 --mem=4gb --pty bash
 ```
