@@ -1,19 +1,38 @@
 #!/usr/bin/env python3
 
 import time
-import argparse
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.utils as tu
 
-#import pytorch_lighting as pl 
+import pytorch_lighting as pl 
 
 import torchvision as tv
 import torchvision.models as models
 
-import mpi4py as mpi
+#import global hyperparameter values like batch_size and epochs
+import globals
+
+
+class ResNet50(LightingModule):
+    def __init__(self, num_classes):
+        super
+
+    def setup(self, stage=None):
+        pass
+    def train_dataloader(self):
+        return tu.data.DataLoader(self.train_dataset, batch_size = self.batch_size, shuffle=True)
+    
+    def val_dataloader(self):
+        return tu.data.DataLoader(self.val_dataset, batch_size=self.batch_size)
+
+class ResNet50(p1.LightningModule):
+    def __init__(self, num_classes=10, lr=0.001):
+        super().__init__()
+        self.save_hyperparameters()
+        self.model = torchvision.models.resnet50()
 
 def main():
 
@@ -97,9 +116,6 @@ def main():
     print(f'Used {epochs} epochs with a batch size of {batch_size}. It took {end_time - start_time} seconds.')
     
     
-
-
-
 
 
 if __name__ == "__main__": 

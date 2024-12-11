@@ -15,6 +15,9 @@ import torchvision.models as models
 
 import mpi4py as mpi
 
+#import global hyperparameter values like batch_size and epochs
+import globals
+
 def main():
 
     # batch size
