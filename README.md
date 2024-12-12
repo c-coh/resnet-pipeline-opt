@@ -15,12 +15,22 @@ Then request a GPU for resources to run the model. Make sure to set number of no
 srun -A sxk1942_csds451 -p markov_gpu -N 4 --gres=gpu:1 --mem=4gb --pty bash
 ```
 
-### Running The GPipeline Code
+### Running the Pytorch Lightning Code
+
 This actually requires the newest version of pytorch (so can't be run with the same module list as the MPI code).
 
-Run the basic application on a transformer model provided by pytorch by running:
+This needs the lightning module, so activate a virtual environment to run.
 ```
-torchrun --nnodes 1 --nproc_per_node 2 pytorch_pipeline_tutorial.py
+module load Python/3.12.3-GCCcore-13.3.0
+python -m venv venv
+source venv/bin/activate
+pip install torch torchvision lightning
+./baseline_lightning.py
+```
+
+To run GPipeleline code using torchrun:
+```
+torchrun --nnodes 3 --nproc_per_node 2 <file.py>
 ```
 
 ### Running MPI pipeline code

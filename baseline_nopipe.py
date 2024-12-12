@@ -8,19 +8,20 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.utils as tu
 
-#import pytorch_lighting as pl 
-
 import torchvision as tv
 import torchvision.models as models
 
-import mpi4py as mpi
-
 def main():
 
-    # batch size
-    batch_size = 4
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-b", "--batch_size", default=4, type=int, help="specify batch size")
+    parser.add_argument("-e", "--epochs", default=2, type=int, help="specify number of training epochs")
+    parser.add_argument("-v", "--verbose", action="store_true", help="specify text output")
+    args = parser.parse_args()
+
     num_workers = 1
-    epochs = 2
+    batch_size  = args.batch_size
+    epochs      = args.epochs
 
     ### MODEL SETUP ###
 
@@ -37,69 +38,74 @@ def main():
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(params = model.parameters(), lr = 0.001)
-    
-    # comm = mpi.comm_world()
-
-    # #get 'dimensions' of world
-    # size = comm.Get_size()
-    # rank = comm.Get_rank()
-
-    #calculate number of layers per GPU
-    # subsection_size = (len(layers) + (size - 1))// size
-    # if(rank > 0):
-    #    subsection = layers[(rank - 1)*subsection_size : min(len(layers), (rank)*subsection_size)]
 
     device = ("cuda" if torch.cuda.is_available else "cpu")
-    print("The device you are using is: ", device)
+    if args.verbose: print("The device you are using is: ", device)
     model.to(device = device)
 
-    start_time = time.time
+    epoch_start = time.time()
     for epoch in range(epochs):
         running_loss = 0.0
 
         # iterate over data for each epoch
+        batch_sum   = 0
+        forward_sum = 0
+        back_sum    = 0
+        num_batches = 0
         for i, data in enumerate(iterable = training_loader, start = 0):
-            
+
+            batch_start = time.time()
+
             inputs, labels = data
             inputs, labels = inputs.to(device), labels.to(device)
             
             outputs = model(inputs)
 
-
-            if i % 200 == 0:
-                print(f"labels: {labels}")
-                print(f"outputs:{outputs}")
+            #if i  == 0:
+            #    print(f"labels: {labels}")
+            #    print(f"outputs:{outputs}")
 
             loss = criterion(outputs, labels)
 
             #access layers of the model
-            layers = list(model.children())
+            #layers = list(model.children())
 
             #for child in model.children():
             #    grandchildren = 0
             #    for grandkid in child.children():
             #        grandchildren += 1
-            #    print(grandchildren)
-
-            
+            #    print(grandchildren)            
 
             # update weights
+            forward_time = time.time()
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
+            back_time = time.time()
 
-            if i % 50  == 19:
+            num_batches += 1
+            batch_sum += back_time-batch_start
+            forward_sum += forward_time - batch_start
+            back_sum += back_time - forward_time
+
+            # minimizing print statements doesn't seem to decrease runtime and does increase nerves by a lot
+            # but comment out for time runs
+            if i % 500  == 499 and args.verbose:
                 print(f'[{epoch + 1}, {i + 1:5d}] loss : {running_loss / 20:.3f}')
+                print(f'[{epoch + 1}, {i + 1:5d}] avg batch time : {batch_sum/num_batches :.3f}')
+                print(f'[{epoch + 1}, {i + 1:5d}] avg forward time : {forward_sum/num_batches :.3f}')
+                print(f'[{epoch + 1}, {i + 1:5d}] avg backwards time : {back_sum/num_batches :.3f}')
 
-    end_time = time.time
+    epoch_end = time.time()
 
-    print(f'Used {epochs} epochs with a batch size of {batch_size}. It took {end_time - start_time} seconds.')
-    
-    
+    # last round of print statements, not optional for verbose because it's the whole point
+    print(f'[{epoch + 1}, {i + 1:5d}] loss : {running_loss / 20:.3f}')
+    print(f'[{epoch + 1}, {i + 1:5d}] avg batch time : {batch_sum/num_batches :.3f}')
+    print(f'[{epoch + 1}, {i + 1:5d}] avg forward time : {forward_sum/num_batches :.3f}')
+    print(f'[{epoch + 1}, {i + 1:5d}] avg backwards time : {back_sum/num_batches :.3f}')
 
-
-
+    print(f'Used {epochs} epochs with a batch size of {batch_size}. It took {epoch_end-epoch_start} seconds.')
 
 
 if __name__ == "__main__": 
