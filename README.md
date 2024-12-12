@@ -21,9 +21,10 @@ This actually requires the newest version of pytorch (so can't be run with the s
 
 This needs the lightning module, so activate a virtual environment to run.
 ```
-python -m venv venve
+module load Python/3.12.3-GCCcore-13.3.0
+python -m venv venv
 source venv/bin/activate
-pip install lightning
+pip install torch torchvision lightning
 ./baseline_lightning.py
 ```
 
