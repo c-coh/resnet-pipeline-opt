@@ -15,6 +15,15 @@ Then request a GPU for resources to run the model. Make sure to set number of no
 srun -A sxk1942_csds451 -p markov_gpu -N 4 --gres=gpu:1 --mem=4gb --pty bash
 ```
 
+### Running the Pytorch Lightning Code
+This needs the lightning module, so activate a virtual environment to run.
+```
+python -m venv venve
+source venv/bin/activate
+pip install lightning
+./baseline_lightning.py
+```
+
 ### Running The GPipeline Code
 This actually requires the newest version of pytorch (so can't be run with the same module list as the MPI code).
 
