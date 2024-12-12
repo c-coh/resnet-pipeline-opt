@@ -87,13 +87,6 @@ def main():
         comm.bcast(num_mini_batches, root=0)
         comm.bcast(num_batches, root=0)
 
-        model = models.resnet50()
-
-        for param in model.parameters():
-            param.requires_grad = True
-
-        optimizer = optim.Adam(params = model.parameters(), lr = 0.001)
-        criterion = nn.CrossEntropyLoss()
 
 
     ### MODEL AND PIPELINING SETUP FOR PIPELINING NODES ###
@@ -101,7 +94,6 @@ def main():
         #recieve num_mini_batches
         num_mini_batches = 0
         num_batches = 0
-        print(num_mini_batches)
         num_mini_batches = comm.bcast(num_mini_batches, root=0)
         num_batches = comm.bcast(num_batches, root=0)
 
@@ -113,6 +105,10 @@ def main():
 
         # modify last layer to match 10 classes in CIFAR-10
         model.fc = nn.Linear(model.fc.in_features, 10)
+    
+        optimizer = optim.Adam(params = model.parameters(), lr = 0.001)
+        criterion = nn.CrossEntropyLoss()
+
 
         layers = list(model.children())
 
@@ -122,11 +118,12 @@ def main():
         #assign subsection of layers based on rank
         subsection_layers = layers[(my_rank - 1) * subsection_size : min(len(layers), my_rank * subsection_size)]
         my_subsection = nn.Sequential(*subsection_layers)
+
+        print(f"RANK: {my_rank}")
+        for layer in my_subsection:
+            print(layer) 
+
         
-        for param in my_subsection.parameters():
-            param.requires_grad = True
-
-
 ##### PART 2: TRAINING #####
     for i in range(num_batches):
         #loading!
@@ -148,23 +145,21 @@ def main():
                 inputs = batch_inputs[j*mini_batch_size:j*mini_batch_size+mini_batch_size]
                 inputs = inputs.to(device)
                 comm.send(inputs, dest=(my_rank + 1), tag=(my_rank + 1)) 
-                #once enough data has been sent, start recieving model output
-            comm.Barrier()
-            result =comm.recv(source=(world_size - 1), tag= my_rank)
-            print(result)
-            for j, r in enumerate(result):
+                
+            all_labels = []
+            
+            #format data for backwards pass
+            for j in range(num_mini_batches):
 
                 labels = batch_labels[j*mini_batch_size:j*mini_batch_size+mini_batch_size]
-                print('e')
-                print(r)
-                print(j)
-                loss = criterion(r.squeeze(), labels)
-                losses.append(loss)
+                all_labels.append(labels)
 
 
-            print("done with forward pass!")
         elif my_rank > 0 and my_rank < (world_size - 1):
             print(f"training {my_rank}!") if debug else None
+
+            #maintain a results array for backpropogation step
+            results = []
 
             #pass each mini-batch through assigned layers
             for i in range(num_mini_batches):
@@ -173,57 +168,60 @@ def main():
                 data = comm.recv(source=(my_rank - 1), tag= my_rank)
                 data = data.to(next(my_subsection.parameters()).device)
                 result = my_subsection(data)
+                results.append(result)
 
                 comm.send(result, dest = (my_rank + 1), tag = (my_rank + 1))
-            comm.Barrier()
 
         else:
             results = []
             
-            print("eeee")
             for i in range(num_mini_batches):
-
                 data = comm.recv(source=(my_rank - 1), tag= my_rank)
                 result = my_subsection(data)
                 results.append(result)
-            comm.Barrier()
-
-            comm.send(results, dest = 0, tag = 0)
-            print("SENT")
         
+        print(f"{my_rank} done with forward pass!") if debug else None
+
         
 
     ## BACKWARDS PASS ##
         if my_rank == 0:
-            #collect the final straggler outputs before starting backpropogation (after all inputs have been fed through)
-            print("started")
-            for _ in range(num_mini_batches):
-                
-                #initialize gradient and pass through model
-                grad_output = torch.ones_like(losses[0])
-                optimizer.zero_grad()
-                losses[0].backward(grad_output, retain_graph=True)
-                comm.send(grad_output, dest=world_size - 1, tag=world_size - 1)
+            comm.send(all_labels, dest=world_size - 1, tag=world_size - 1)
 
         elif my_rank > 0 and my_rank < (world_size - 1):
-            print("started")
-
-            for _ in range(num_mini_batches):
+            for i in range(num_mini_batches):
 
                 #compute gradient based on previous input
-                prev_grad = comm.recv(source=my_rank + 1, tag=my_rank + 1)
-                result_grad = torch.autograd.grad(outputs=my_subsection.output, inputs=my_subsection.parameters(), grad_outputs=prev_grad)
-                comm.send(result_grad, dest=my_rank - 1, tag=my_rank - 1)
+                prev_grad = comm.recv(source=my_rank + 1, tag=my_rank)
+
+                results[i].backward(prev_grad)
+                curr_grad = my_subsection.grad
+                comm.send(curr_grad, dest=my_rank - 1, tag=my_rank - 1)
 
         else:
-            for _ in range(num_mini_batches):
+            labels = comm.recv(source=0, tag=my_rank)
 
-                #compute gradient based on previous input
-                loss_grad = comm.recv(source=0, tag=my_rank)
-                loss_grad.backward()
-                comm.send(loss_grad, dest=my_rank - 1, tag=my_rank - 1)
+            for i in range(num_mini_batches):
 
-        print(f"done with backwards pass!")
+                #compute gradient based on previous inputs
+
+                loss = criterion(results[i].squeeze(), labels[i])
+
+                loss.backward()
+                
+                #gradient = torch.tensor()
+                for param in my_subsection.parameters():
+                    print(param.grad.shape)
+
+
+                    #gradient = torch.cat(param.grad)
+
+                comm.send(gradient, dest=my_rank - 1, tag=my_rank - 1)
+
+        print(f"{my_rank} done with backwards pass!")
+        comm.Barrier()
+
+
 
 
     
